@@ -14,6 +14,8 @@ func TestNormalize(t *testing.T) {
 		"3.15":                     "3 15",
 		"DOGGIN’ AROUND":           "doggin around",
 		"GILMER, JIMMY & THE BAND": "gilmer jimmy the band",
+		"ПЕ\u00adРЕ\u200bХОД":      "переход",
+		"ЗВЁ\u0301ЗДЫ\u00a0НЕБА":   "звезды неба",
 	}
 	for in, want := range cases {
 		if got := Normalize(in); got != want {

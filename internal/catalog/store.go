@@ -2,28 +2,52 @@ package catalog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"os"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
+// Источник текущего каталога.
+const (
+	SourceFile   = "file"   // файл CATALOG_FILE (XLS / base.db)
+	SourceImport = "import" // присланный через API (encore-sync)
+)
+
+// Tab — вкладка каталога (EnCore) и число песен в ней.
+type Tab struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Songs int    `json:"songs"`
+}
+
 // Snapshot — загруженная версия каталога вместе с построенным по ней индексом.
 type Snapshot[I any] struct {
-	Index    I
-	Source   string
-	Adapter  string
-	Songs    int
-	Rejected int
-	LoadedAt time.Time
-	modTime  time.Time
-	size     int64
+	Index     I
+	Kind      string // SourceFile | SourceImport
+	Source    string // путь к файлу или описание источника импорта
+	Adapter   string
+	Hash      string // хеш импортированных данных (для файла пусто)
+	Songs     int
+	Rejected  int
+	Favorites int
+	Lyrics    int // песен со словами текста (поиск «по тексту»)
+	Tabs      []Tab
+	LoadedAt  time.Time
+	modTime   time.Time
+	size      int64
 }
 
 // Store держит текущий снимок каталога и атомарно подменяет его при
 // переимпорте. Старый индекс закрывается с задержкой, чтобы успели
 // завершиться запросы, начатые до подмены.
+//
+// Каталог приходит из файла (CATALOG_FILE, с отслеживанием изменений) или
+// через импорт (Install с SourceImport). Импорт главнее: пока он загружен,
+// изменения файла игнорируются.
 type Store[I interface{ Close() error }] struct {
 	path    string
 	adapter string
@@ -37,6 +61,8 @@ type Store[I interface{ Close() error }] struct {
 	failedSize int64
 }
 
+// NewStore создаёт хранилище. path может быть пустым — тогда каталог
+// появляется только через импорт.
 func NewStore[I interface{ Close() error }](path, adapter string, build func([]Song) (I, error)) *Store[I] {
 	return &Store[I]{path: path, adapter: adapter, build: build}
 }
@@ -44,8 +70,14 @@ func NewStore[I interface{ Close() error }](path, adapter string, build func([]S
 // Current возвращает текущий снимок или nil, если каталог ещё не загружен.
 func (s *Store[I]) Current() *Snapshot[I] { return s.current.Load() }
 
+// ErrNoFile — файл каталога не задан.
+var ErrNoFile = errors.New("catalog file is not configured")
+
 // Reload перечитывает файл каталога и перестраивает индекс.
 func (s *Store[I]) Reload() (*Snapshot[I], error) {
+	if s.path == "" {
+		return nil, ErrNoFile
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -53,24 +85,49 @@ func (s *Store[I]) Reload() (*Snapshot[I], error) {
 	if err != nil {
 		return nil, err
 	}
-	start := time.Now()
 	res, err := LoadFile(s.path, s.adapter)
 	if err != nil {
 		return nil, err
 	}
+	snap, err := s.install(res, SourceFile, s.path, "")
+	if err != nil {
+		return nil, err
+	}
+	snap.modTime, snap.size = st.ModTime(), st.Size()
+	return snap, nil
+}
+
+// Install строит индекс по готовому результату (импорт) и подменяет каталог.
+func (s *Store[I]) Install(res *Result, kind, source, hash string) (*Snapshot[I], error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.install(res, kind, source, hash)
+}
+
+func (s *Store[I]) install(res *Result, kind, source, hash string) (*Snapshot[I], error) {
+	start := time.Now()
 	idx, err := s.build(res.Songs)
 	if err != nil {
 		return nil, err
 	}
 	snap := &Snapshot[I]{
 		Index:    idx,
-		Source:   s.path,
+		Kind:     kind,
+		Source:   source,
 		Adapter:  res.Adapter,
+		Hash:     hash,
 		Songs:    len(res.Songs),
 		Rejected: res.Rejected,
+		Tabs:     tabsOf(res.Songs),
 		LoadedAt: time.Now(),
-		modTime:  st.ModTime(),
-		size:     st.Size(),
+	}
+	for _, song := range res.Songs {
+		if song.Favorite {
+			snap.Favorites++
+		}
+		if song.Lyrics != "" {
+			snap.Lyrics++
+		}
 	}
 	if old := s.current.Swap(snap); old != nil {
 		time.AfterFunc(time.Minute, func() {
@@ -79,14 +136,41 @@ func (s *Store[I]) Reload() (*Snapshot[I], error) {
 			}
 		})
 	}
-	slog.Info("catalog loaded", "file", s.path, "adapter", res.Adapter,
-		"songs", snap.Songs, "rejected", snap.Rejected, "took", time.Since(start).Round(time.Millisecond))
+	slog.Info("catalog loaded", "kind", kind, "source", source, "adapter", res.Adapter,
+		"songs", snap.Songs, "rejected", snap.Rejected, "tabs", len(snap.Tabs),
+		"took", time.Since(start).Round(time.Millisecond))
 	return snap, nil
 }
 
+// tabsOf считает песни по вкладкам; песни без вкладки (XLS) вкладок не дают.
+func tabsOf(songs []Song) []Tab {
+	byID := map[int]*Tab{}
+	for _, s := range songs {
+		if s.Tab == 0 {
+			continue
+		}
+		t, ok := byID[s.Tab]
+		if !ok {
+			t = &Tab{ID: s.Tab, Name: s.TabName}
+			byID[s.Tab] = t
+		}
+		t.Songs++
+	}
+	tabs := make([]Tab, 0, len(byID))
+	for _, t := range byID {
+		tabs = append(tabs, *t)
+	}
+	sort.Slice(tabs, func(i, j int) bool { return tabs[i].ID < tabs[j].ID })
+	return tabs
+}
+
 // Watch периодически проверяет файл и перезагружает каталог, если он
-// изменился (новая выгрузка из караоке-системы).
+// изменился (новая выгрузка из караоке-системы). Пока загружен импорт,
+// файл не перечитывается.
 func (s *Store[I]) Watch(ctx context.Context, every time.Duration) {
+	if s.path == "" {
+		return
+	}
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -95,12 +179,15 @@ func (s *Store[I]) Watch(ctx context.Context, every time.Duration) {
 			return
 		case <-t.C:
 		}
+		cur := s.Current()
+		if cur != nil && cur.Kind == SourceImport {
+			continue
+		}
 		st, err := os.Stat(s.path)
 		if err != nil {
 			slog.Warn("catalog file unavailable", "file", s.path, "err", err)
 			continue
 		}
-		cur := s.Current()
 		if cur != nil && st.ModTime().Equal(cur.modTime) && st.Size() == cur.size {
 			continue
 		}

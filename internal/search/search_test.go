@@ -160,3 +160,59 @@ func TestSearchSmall(t *testing.T) {
 		})
 	}
 }
+
+func TestSearchLyricsAndFavorites(t *testing.T) {
+	ix, err := Build([]catalog.Song{
+		{ID: "2:1", Number: "1", Tab: 2, TabName: "General", Title: "ГРУППА КРОВИ", Artist: "КИНО", Lyrics: "ТЕПЛОЕ МЕСТО УЛИЦЕ"},
+		{ID: "2:2", Number: "2", Tab: 2, TabName: "General", Title: "ТЕПЛОЕ МЕСТО", Artist: "ДРУГИЕ", Favorite: true},
+		{ID: "2:3", Number: "3", Tab: 2, TabName: "General", Title: "ПАЧКА СИГАРЕТ", Artist: "КИНО", Lyrics: "Я ЖДУ ОТВЕТА", Favorite: true},
+		{ID: "1:4", Number: "4", Tab: 1, TabName: "Kvartirnik", Title: "СВОЯ", Artist: "KARAOKE"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ix.Close() })
+	ids := func(res *Response) []string {
+		var out []string
+		for _, h := range res.Items {
+			out = append(out, h.ID)
+		}
+		return out
+	}
+	ctx := context.Background()
+
+	// Режим «по тексту»: только слова текста, с опечатками.
+	res, _ := ix.Search(ctx, Request{Query: "теплоэ", Mode: ModeLyrics})
+	if got := ids(res); !slices.Equal(got, []string{"2:1"}) {
+		t.Errorf("lyrics mode = %v", got)
+	}
+	if res.Items[0].Matches["lyrics"] == nil {
+		t.Errorf("lyrics matches = %v", res.Items[0].Matches)
+	}
+	// «Везде»: совпадение в названии выше совпадения в тексте.
+	res, _ = ix.Search(ctx, Request{Query: "теплое место"})
+	if got := ids(res); !slices.Equal(got, []string{"2:2", "2:1"}) {
+		t.Errorf("all mode = %v", got)
+	}
+	// В «везде» текст ищется только точным словом — префикс по тексту не срабатывает.
+	res, _ = ix.Search(ctx, Request{Query: "отве"})
+	if res.Total != 0 {
+		t.Errorf("prefix on lyrics in all mode = %v", ids(res))
+	}
+	// Избранное.
+	res, _ = ix.Search(ctx, Request{Favorite: true})
+	if got := ids(res); len(got) != 2 {
+		t.Errorf("favorites = %v", got)
+	}
+	res, _ = ix.Search(ctx, Request{Query: "кино", Favorite: true})
+	if got := ids(res); !slices.Equal(got, []string{"2:3"}) {
+		t.Errorf("favorites + query = %v", got)
+	}
+	// Название вкладки — только не у основной (самой большой) вкладки.
+	res, _ = ix.Search(ctx, Request{})
+	for _, h := range res.Items {
+		if (h.Tab == 1) != (h.TabName != "") {
+			t.Errorf("tabName for %s = %q", h.ID, h.TabName)
+		}
+	}
+}

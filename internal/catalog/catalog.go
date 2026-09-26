@@ -13,12 +13,21 @@ import (
 
 // Song — запись каталога в унифицированном виде (CatalogEntry из ТЗ, FR-01.2).
 type Song struct {
-	ID        string `json:"id"`     // номер песни в караоке-системе
-	Title     string `json:"title"`  // название как в исходном файле
-	Artist    string `json:"artist"` // исполнитель как в исходном файле
-	BackVocal bool   `json:"backVocal"`
-	Format    string `json:"format,omitempty"` // формат караоке-файла (в Encore — EMP)
+	ID         string `json:"id"`            // уникальный ключ в каталоге («n» или «вкладка:n»)
+	Number     string `json:"number"`        // номер песни в караоке-системе (вводит оператор)
+	Tab        int    `json:"tab,omitempty"` // вкладка EnCore (0 — неизвестна, например из XLS)
+	TabName    string `json:"tabName,omitempty"`
+	Title      string `json:"title"`  // название без служебного суффикса « +»
+	Artist     string `json:"artist"` // исполнитель как в исходном файле
+	BackVocal  bool   `json:"backVocal"`
+	VocalTrack bool   `json:"vocalTrack,omitempty"` // есть отдельная дорожка с голосом (« +» в названии EnCore)
+	Favorite   bool   `json:"favorite,omitempty"`   // избранное заведения (optFav в EnCore)
+	Format     string `json:"format,omitempty"`     // формат караоке-файла (в Encore — EMP)
+	Lyrics     string `json:"-"`                    // слова текста для поиска (ftext EnCore), наружу не отдаются
 }
+
+// vocalTrackSuffix — так EnCore помечает песни с отдельной дорожкой голоса.
+const vocalTrackSuffix = " +"
 
 // FileMeta — то, что адаптер видит при автодетекте.
 type FileMeta struct {
@@ -36,7 +45,13 @@ type Adapter interface {
 
 // Adapters — зарегистрированные адаптеры в порядке приоритета.
 var Adapters = []Adapter{
+	EncoreBase{},
 	EncoreXLS{},
+}
+
+// PathParser — адаптер, которому нужен путь к файлу, а не поток (например, SQLite).
+type PathParser interface {
+	ParsePath(path string) ([]Song, error)
 }
 
 // ErrNoAdapter возвращается, если формат файла не распознан ни одним адаптером.
@@ -72,12 +87,23 @@ func LoadFile(path, adapterName string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	songs, err := adapter.Parse(f)
+	var songs []Song
+	if pp, ok := adapter.(PathParser); ok {
+		f.Close()
+		songs, err = pp.ParsePath(path)
+	} else {
+		songs, err = adapter.Parse(f)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", adapter.Name(), err)
 	}
+	return NewResult(adapter.Name(), songs), nil
+}
+
+// NewResult нормализует и проверяет записи, полученные адаптером или импортом.
+func NewResult(adapter string, songs []Song) *Result {
 	valid, rejected := validate(songs)
-	return &Result{Adapter: adapter.Name(), Songs: valid, Rejected: rejected}, nil
+	return &Result{Adapter: adapter, Songs: valid, Rejected: rejected}
 }
 
 func pickAdapter(meta FileMeta, name string) (Adapter, error) {
@@ -105,8 +131,15 @@ func validate(songs []Song) ([]Song, int) {
 	rejected := 0
 	for _, s := range songs {
 		s.ID = strings.TrimSpace(s.ID)
+		s.Number = strings.TrimSpace(s.Number)
+		if s.Number == "" {
+			s.Number = s.ID
+		}
 		s.Title = strings.TrimSpace(s.Title)
 		s.Artist = strings.TrimSpace(s.Artist)
+		if t, ok := strings.CutSuffix(s.Title, vocalTrackSuffix); ok && t != "" {
+			s.Title, s.VocalTrack = strings.TrimSpace(t), true
+		}
 		if s.ID == "" || (s.Title == "" && s.Artist == "") {
 			rejected++
 			continue

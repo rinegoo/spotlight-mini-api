@@ -20,6 +20,7 @@ const (
 	ModeAll    = "all"
 	ModeArtist = "artist"
 	ModeTitle  = "title"
+	ModeLyrics = "lyrics" // по словам текста песни (ftext EnCore)
 )
 
 // Фильтр по бэк-вокалу (FR-01.6).
@@ -39,6 +40,9 @@ const (
 const (
 	weightTitle  = 1.0
 	weightArtist = 0.8
+	// В режиме «везде» текст песни учитывается слабо и только точным словом:
+	// иначе префиксы и опечатки по текстам тысяч песен заглушили бы названия.
+	weightLyricsInAll = 0.3
 )
 
 // Короткие служебные слова не обязательны для совпадения:
@@ -49,18 +53,19 @@ var optionalWords = map[string]bool{
 }
 
 type Request struct {
-	Query  string
-	Mode   string // all | artist | title
-	Back   string // "" | yes | no
-	Artist string // точное имя исполнителя из каталога
-	Limit  int
-	Offset int
+	Query    string
+	Mode     string // all | artist | title | lyrics
+	Back     string // "" | yes | no
+	Favorite bool   // только избранное заведения
+	Artist   string // точное имя исполнителя из каталога
+	Limit    int
+	Offset   int
 }
 
 type Hit struct {
 	catalog.Song
-	// Нормализованные слова, совпавшие с запросом, по полям title/artist —
-	// фронтенд подсвечивает по ним.
+	// Нормализованные слова, совпавшие с запросом, по полям title/artist/lyrics —
+	// фронтенд подсвечивает по ним (lyrics — «найдено в тексте»).
 	Matches map[string][]string `json:"matches,omitempty"`
 }
 
@@ -125,10 +130,13 @@ func (ix *Index) Search(ctx context.Context, req Request) (*Response, error) {
 		if !ok {
 			continue
 		}
+		if song.Tab == ix.primaryTab {
+			song.TabName = "" // название показываем только для «особых» вкладок
+		}
 		resp.Items = append(resp.Items, Hit{Song: song, Matches: matchedTerms(h)})
 	}
 
-	if len(tokens) > 0 && req.Mode != ModeTitle && req.Artist == "" && req.Offset == 0 {
+	if len(tokens) > 0 && req.Mode != ModeTitle && req.Mode != ModeLyrics && req.Artist == "" && req.Offset == 0 {
 		resp.Artists, err = ix.artistFacets(ctx, req, tokens, resp.Partial)
 		if err != nil {
 			return nil, err
@@ -167,20 +175,23 @@ func (ix *Index) artistFacets(ctx context.Context, req Request, tokens []string,
 }
 
 type fieldSpec struct {
-	words, compact string
+	words, compact string // compact == "" — у поля нет «слитного» варианта
 	weight         float64
+	loose          bool // разрешены префикс и опечатки
 }
 
 func fieldsFor(mode string) []fieldSpec {
-	title := fieldSpec{fieldTitle, fieldTitleCompact, weightTitle}
-	artist := fieldSpec{fieldArtist, fieldArtistCompact, weightArtist}
+	title := fieldSpec{fieldTitle, fieldTitleCompact, weightTitle, true}
+	artist := fieldSpec{fieldArtist, fieldArtistCompact, weightArtist, true}
 	switch mode {
 	case ModeTitle:
 		return []fieldSpec{title}
 	case ModeArtist:
 		return []fieldSpec{artist}
+	case ModeLyrics:
+		return []fieldSpec{{fieldLyrics, "", 1, true}}
 	}
-	return []fieldSpec{title, artist}
+	return []fieldSpec{title, artist, {fieldLyrics, "", weightLyricsInAll, false}}
 }
 
 func (ix *Index) buildQuery(req Request, tokens []string, fields []fieldSpec, relaxed bool) query.Query {
@@ -214,6 +225,9 @@ func (ix *Index) buildQuery(req Request, tokens []string, fields []fieldSpec, re
 		// выше, чем «YESTERDAY ONCE MORE».
 		whole := strings.Join(tokens, "")
 		for _, f := range fields {
+			if f.compact == "" {
+				continue
+			}
 			t := bleve.NewTermQuery(whole)
 			t.SetField(f.compact)
 			t.SetBoost(6 * f.weight)
@@ -230,6 +244,11 @@ func (ix *Index) buildQuery(req Request, tokens []string, fields []fieldSpec, re
 	case BackYes, BackNo:
 		b := bleve.NewBoolFieldQuery(req.Back == BackYes)
 		b.SetField(fieldBack)
+		bq.AddFilter(b)
+	}
+	if req.Favorite {
+		b := bleve.NewBoolFieldQuery(true)
+		b.SetField(fieldFavorite)
 		bq.AddFilter(b)
 	}
 	return bq
@@ -255,6 +274,9 @@ func tokenQuery(tok string, last bool, fields []fieldSpec) query.Query {
 		t.SetBoost(3 * f.weight)
 		qs = append(qs, t)
 
+		if !f.loose {
+			continue
+		}
 		if last && n >= 2 {
 			p := bleve.NewPrefixQuery(tok)
 			p.SetField(f.words)
@@ -269,6 +291,9 @@ func tokenQuery(tok string, last bool, fields []fieldSpec) query.Query {
 			qs = append(qs, fz)
 		}
 		// Слитное написание: «acdc» → «AC/DC», «аха» не сработает, но «aha» → «A-HA».
+		if f.compact == "" {
+			continue
+		}
 		if n >= 3 {
 			c := bleve.NewTermQuery(tok)
 			c.SetField(f.compact)
@@ -300,7 +325,7 @@ func matchedTerms(h *search.DocumentMatch) map[string][]string {
 	}
 	for field, terms := range h.Locations {
 		switch field {
-		case fieldTitle, fieldArtist:
+		case fieldTitle, fieldArtist, fieldLyrics:
 			add(field, terms)
 		case fieldTitleCompact:
 			out[fieldTitle] = append(out[fieldTitle], "*")

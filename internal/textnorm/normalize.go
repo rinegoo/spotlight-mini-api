@@ -35,7 +35,9 @@ func Normalize(s string) string {
 		case 'й':
 			put('й')
 			continue
-		case '\'', '’', '‘', '`', 'ʼ', '´':
+		case '\'', '’', '‘', '`', 'ʼ', '´',
+			'\u00ad',                               // мягкий перенос (встречается в ftext EnCore)
+			'\u200b', '\u200c', '\u200d', '\ufeff': // невидимые символы нулевой ширины
 			continue
 		}
 		if r < 0x80 {

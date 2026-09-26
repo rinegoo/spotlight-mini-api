@@ -15,21 +15,34 @@ import (
 
 type Store interface {
 	Current() *catalog.Snapshot[*search.Index]
+	Install(res *catalog.Result, kind, source, hash string) (*catalog.Snapshot[*search.Index], error)
+}
+
+// Config — настройки API.
+type Config struct {
+	// ImportToken — Bearer-токен для POST /api/import; пусто — импорт выключен.
+	ImportToken string
+	// DataDir — куда сохранять принятый импорт (переживает перезапуск); пусто — не сохранять.
+	DataDir string
 }
 
 // New возвращает обработчик со всеми маршрутами API.
-func New(store Store) http.Handler {
-	h := &handler{store: store}
+func New(store Store, cfg Config) http.Handler {
+	h := &handler{store: store, cfg: cfg}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/search", h.search)
 	mux.HandleFunc("GET /api/stats", h.stats)
+	mux.HandleFunc("POST /api/import", h.importCatalog)
 	mux.HandleFunc("GET /health", h.health)
 	return withCORS(withLogging(mux))
 }
 
-type handler struct{ store Store }
+type handler struct {
+	store Store
+	cfg   Config
+}
 
-// GET /api/search?q=&mode=all|artist|title&back=yes|no&artist=&limit=&offset=
+// GET /api/search?q=&mode=all|artist|title|lyrics&back=yes|no&fav=1&artist=&limit=&offset=
 func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 	snap := h.store.Current()
 	if snap == nil {
@@ -38,12 +51,13 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	req := search.Request{
-		Query:  q.Get("q"),
-		Mode:   q.Get("mode"),
-		Back:   q.Get("back"),
-		Artist: q.Get("artist"),
-		Limit:  intParam(q.Get("limit")),
-		Offset: intParam(q.Get("offset")),
+		Query:    q.Get("q"),
+		Mode:     q.Get("mode"),
+		Back:     q.Get("back"),
+		Artist:   q.Get("artist"),
+		Favorite: q.Get("fav") == "1" || q.Get("fav") == "true",
+		Limit:    intParam(q.Get("limit")),
+		Offset:   intParam(q.Get("offset")),
 	}
 	if req.Back != search.BackAny && req.Back != search.BackYes && req.Back != search.BackNo {
 		writeError(w, http.StatusBadRequest, "back must be yes or no")
@@ -62,10 +76,15 @@ func (h *handler) search(w http.ResponseWriter, r *http.Request) {
 }
 
 type statsResponse struct {
-	Songs    int       `json:"songs"`
-	Artists  int       `json:"artists"`
-	Adapter  string    `json:"adapter"`
-	LoadedAt time.Time `json:"loadedAt"`
+	Songs     int           `json:"songs"`
+	Artists   int           `json:"artists"`
+	Favorites int           `json:"favorites"`
+	Lyrics    int           `json:"lyrics"` // песен со словами текста
+	Tabs      []catalog.Tab `json:"tabs,omitempty"`
+	Adapter   string        `json:"adapter"`
+	Kind      string        `json:"kind"`           // file | import
+	Hash      string        `json:"hash,omitempty"` // хеш импорта
+	LoadedAt  time.Time     `json:"loadedAt"`
 }
 
 func (h *handler) stats(w http.ResponseWriter, _ *http.Request) {
@@ -75,10 +94,15 @@ func (h *handler) stats(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, statsResponse{
-		Songs:    snap.Songs,
-		Artists:  snap.Index.Artists(),
-		Adapter:  snap.Adapter,
-		LoadedAt: snap.LoadedAt,
+		Songs:     snap.Songs,
+		Artists:   snap.Index.Artists(),
+		Favorites: snap.Favorites,
+		Lyrics:    snap.Lyrics,
+		Tabs:      snap.Tabs,
+		Adapter:   snap.Adapter,
+		Kind:      snap.Kind,
+		Hash:      snap.Hash,
+		LoadedAt:  snap.LoadedAt,
 	})
 }
 

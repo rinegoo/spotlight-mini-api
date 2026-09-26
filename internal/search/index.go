@@ -26,6 +26,8 @@ const (
 	fieldTitleCompact  = "title_compact"
 	fieldArtistKey     = "artist_key" // исполнитель как в каталоге, для фильтра и фасета
 	fieldBack          = "back"
+	fieldFavorite      = "fav"
+	fieldLyrics        = "lyrics" // слова текста песни (ftext EnCore)
 	fieldSortArtist    = "sort_artist"
 	fieldSortTitle     = "sort_title"
 )
@@ -39,16 +41,19 @@ type document struct {
 	TitleCompact  string `json:"title_compact"`
 	ArtistKey     string `json:"artist_key"`
 	Back          bool   `json:"back"`
+	Favorite      bool   `json:"fav"`
+	Lyrics        string `json:"lyrics"`
 	SortArtist    string `json:"sort_artist"`
 	SortTitle     string `json:"sort_title"`
 }
 
 // Index — неизменяемый индекс одной версии каталога.
 type Index struct {
-	bleve   bleve.Index
-	dir     string
-	songs   map[string]catalog.Song
-	artists int
+	bleve      bleve.Index
+	dir        string
+	songs      map[string]catalog.Song
+	artists    int
+	primaryTab int // самая большая вкладка: её название в выдаче не показываем
 }
 
 // Build индексирует песни во временный каталог. Текст нормализуется в Go
@@ -86,9 +91,8 @@ func Build(songs []catalog.Song) (_ *Index, err error) {
 	byID := make(map[string]catalog.Song, len(songs))
 	artists := make(map[string]struct{})
 	batch := idx.NewBatch()
+	tabSongs := map[int]int{}
 	for _, s := range songs {
-		byID[s.ID] = s
-		artists[s.Artist] = struct{}{}
 		doc := document{
 			Title:         textnorm.Normalize(s.Title),
 			Artist:        textnorm.Normalize(s.Artist),
@@ -96,7 +100,13 @@ func Build(songs []catalog.Song) (_ *Index, err error) {
 			TitleCompact:  textnorm.Compact(s.Title),
 			ArtistKey:     s.Artist,
 			Back:          s.BackVocal,
+			Favorite:      s.Favorite,
+			Lyrics:        textnorm.Normalize(s.Lyrics),
 		}
+		s.Lyrics = "" // слова текста нужны только индексу — в памяти выдачи не держим
+		byID[s.ID] = s
+		artists[s.Artist] = struct{}{}
+		tabSongs[s.Tab]++
 		doc.SortArtist, doc.SortTitle = doc.Artist, doc.Title
 		if err := batch.Index(s.ID, doc); err != nil {
 			return nil, err
@@ -111,7 +121,13 @@ func Build(songs []catalog.Song) (_ *Index, err error) {
 	if err := idx.Batch(batch); err != nil {
 		return nil, err
 	}
-	return &Index{bleve: idx, dir: dir, songs: byID, artists: len(artists)}, nil
+	primary := 0
+	for tab, n := range tabSongs {
+		if n > tabSongs[primary] || (n == tabSongs[primary] && tab < primary) {
+			primary = tab
+		}
+	}
+	return &Index{bleve: idx, dir: dir, songs: byID, artists: len(artists), primaryTab: primary}, nil
 }
 
 func buildMapping() mapping.IndexMapping {
@@ -141,6 +157,7 @@ func buildMapping() mapping.IndexMapping {
 
 	dm := bleve.NewDocumentStaticMapping()
 	dm.AddFieldMappingsAt(fieldTitle, text(analyzerWords))
+	dm.AddFieldMappingsAt(fieldLyrics, text(analyzerWords))
 	dm.AddFieldMappingsAt(fieldArtist, text(analyzerWords))
 	dm.AddFieldMappingsAt(fieldArtistCompact, text(keyword.Name))
 	dm.AddFieldMappingsAt(fieldTitleCompact, text(keyword.Name))
@@ -151,6 +168,10 @@ func buildMapping() mapping.IndexMapping {
 	back.Store = false
 	back.IncludeInAll = false
 	dm.AddFieldMappingsAt(fieldBack, back)
+	fav := bleve.NewBooleanFieldMapping()
+	fav.Store = false
+	fav.IncludeInAll = false
+	dm.AddFieldMappingsAt(fieldFavorite, fav)
 
 	im.DefaultMapping = dm
 	im.DefaultAnalyzer = analyzerWords
@@ -174,7 +195,7 @@ func (ix *Index) Close() error {
 
 func normalizeMode(m string) string {
 	switch strings.ToLower(m) {
-	case ModeArtist, ModeTitle:
+	case ModeArtist, ModeTitle, ModeLyrics:
 		return strings.ToLower(m)
 	}
 	return ModeAll
