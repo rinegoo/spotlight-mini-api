@@ -57,3 +57,26 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Передеплой стека в Portainer (Business Edition): вебхук стека скачивает
+  # свежие образы и перезапускает сервисы. URL вебхука — секрет
+  # PORTAINER_WEBHOOK_URL (токен в URL даёт право на передеплой, в логи не
+  # выводится). Без секрета шаг пропускается.
+  deploy:
+    needs: image
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: portainer-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Trigger Portainer stack webhook
+        env:
+          WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          if [ -z "$WEBHOOK_URL" ]; then
+            echo "::notice::PORTAINER_WEBHOOK_URL is not set, skipping deploy"
+            exit 0
+          fi
+          curl --fail-with-body -sS -X POST --retry 2 --max-time 300 "$WEBHOOK_URL"
+          echo "Portainer redeploy triggered"
