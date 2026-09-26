@@ -1,0 +1,33 @@
+# Продакшн-запуск каталога из готовых образов GHCR (собираются GitHub Actions).
+#
+#   cp .env.example .env    # указать папку с выгрузкой Encore
+#   docker compose pull && docker compose up -d
+#
+# Выгрузку каталога (.xls из Encore) кладут на сервер вручную в CATALOG_DIR.
+# Монтируется папка, а не файл: при замене файла новой выгрузкой bind-mount
+# отдельного файла продолжал бы указывать на старую версию. Сервер сам
+# замечает изменение и перестраивает индекс; пока файла нет — стартует и ждёт.
+
+services:
+  server:
+    image: ghcr.io/rinegoo/spotlight-mini-api:${API_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      CATALOG_FILE: /data/${CATALOG_FILENAME:?set CATALOG_FILENAME in .env}
+      CATALOG_WATCH_INTERVAL: ${CATALOG_WATCH_INTERVAL:-30s}
+    volumes:
+      - ${CATALOG_DIR:?set CATALOG_DIR in .env}:/data:ro
+    # Наружу не публикуется: браузер ходит в web, а тот проксирует /api/*.
+    expose:
+      - "8080"
+
+  web:
+    image: ghcr.io/rinegoo/spotlight-mini-web:${WEB_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      CATALOG_API_URL: http://server:8080
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      server:
+        condition: service_healthy
