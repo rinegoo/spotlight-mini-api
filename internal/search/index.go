@@ -28,6 +28,7 @@ const (
 	fieldBack          = "back"
 	fieldFavorite      = "fav"
 	fieldLyrics        = "lyrics" // слова текста песни (ftext EnCore)
+	fieldNumber        = "number" // номер песни в караоке-системе, одним токеном
 	fieldSortArtist    = "sort_artist"
 	fieldSortTitle     = "sort_title"
 )
@@ -43,6 +44,7 @@ type document struct {
 	Back          bool   `json:"back"`
 	Favorite      bool   `json:"fav"`
 	Lyrics        string `json:"lyrics"`
+	Number        string `json:"number"`
 	SortArtist    string `json:"sort_artist"`
 	SortTitle     string `json:"sort_title"`
 }
@@ -102,6 +104,7 @@ func Build(songs []catalog.Song) (_ *Index, err error) {
 			Back:          s.BackVocal,
 			Favorite:      s.Favorite,
 			Lyrics:        textnorm.Normalize(s.Lyrics),
+			Number:        s.Number,
 		}
 		s.Lyrics = "" // слова текста нужны только индексу — в памяти выдачи не держим
 		byID[s.ID] = s
@@ -161,6 +164,7 @@ func buildMapping() mapping.IndexMapping {
 	dm.AddFieldMappingsAt(fieldArtist, text(analyzerWords))
 	dm.AddFieldMappingsAt(fieldArtistCompact, text(keyword.Name))
 	dm.AddFieldMappingsAt(fieldTitleCompact, text(keyword.Name))
+	dm.AddFieldMappingsAt(fieldNumber, text(keyword.Name))
 	dm.AddFieldMappingsAt(fieldArtistKey, sortable())
 	dm.AddFieldMappingsAt(fieldSortArtist, sortable())
 	dm.AddFieldMappingsAt(fieldSortTitle, sortable())

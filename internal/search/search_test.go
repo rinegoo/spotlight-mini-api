@@ -216,3 +216,45 @@ func TestSearchLyricsAndFavorites(t *testing.T) {
 		}
 	}
 }
+
+func TestSearchByNumber(t *testing.T) {
+	ix, err := Build([]catalog.Song{
+		{ID: "2:12345", Number: "12345", Title: "ПЕРВАЯ ПЕСНЯ", Artist: "ТЕСТОВЫЙ ДУЭТ"},
+		{ID: "2:12346", Number: "12346", Title: "ВТОРАЯ ПЕСНЯ", Artist: "ТЕСТОВЫЙ ДУЭТ"},
+		{ID: "2:1234", Number: "1234", Title: "ТРЕТЬЯ ПЕСНЯ", Artist: "КТО-ТО"},
+		{ID: "2:21", Number: "21", Title: "ЧЕТВЁРТАЯ ПЕСНЯ", Artist: "ИСПОЛНИТЕЛЬ"},
+		{ID: "2:900", Number: "900", Title: "21 ШАГ", Artist: "ДРУГОЙ ИСПОЛНИТЕЛЬ"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ix.Close() })
+	ctx := context.Background()
+	first := func(q string, mode string) (string, uint64) {
+		res, err := ix.Search(ctx, Request{Query: q, Mode: mode})
+		if err != nil || len(res.Items) == 0 {
+			return "", 0
+		}
+		return res.Items[0].ID, res.Total
+	}
+	// Точный номер — первым, даже если он же префикс других номеров.
+	if id, _ := first("12345", ""); id != "2:12345" {
+		t.Errorf("exact number = %s", id)
+	}
+	if id, total := first("1234", ""); id != "2:1234" || total != 3 {
+		t.Errorf("number 1234 = %s (total %d), want exact first and 2 by prefix", id, total)
+	}
+	// Короткое число: и номер, и название с этим числом.
+	res, _ := ix.Search(ctx, Request{Query: "21"})
+	if res.Total != 2 || res.Items[0].ID != "2:21" {
+		t.Errorf("21 = %+v", res.Items)
+	}
+	// Число с пробелами вокруг и в режиме «Название» тоже ищется по номеру.
+	if id, _ := first(" 12346 ", ModeTitle); id != "2:12346" {
+		t.Errorf("number in title mode = %s", id)
+	}
+	// Фасеты исполнителей по номеру не строятся.
+	if res, _ := ix.Search(ctx, Request{Query: "12345"}); len(res.Artists) != 0 {
+		t.Errorf("artist facets for a number = %v", res.Artists)
+	}
+}

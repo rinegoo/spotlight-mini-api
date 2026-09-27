@@ -147,7 +147,7 @@ func (ix *Index) Search(ctx context.Context, req Request) (*Response, error) {
 }
 
 func (ix *Index) run(ctx context.Context, req Request, tokens []string, relaxed bool) (*bleve.SearchResult, error) {
-	sr := bleve.NewSearchRequestOptions(ix.buildQuery(req, tokens, fieldsFor(req.Mode), relaxed), req.Limit, req.Offset, false)
+	sr := bleve.NewSearchRequestOptions(ix.buildQuery(req, tokens, fieldsFor(req.Mode), relaxed, true), req.Limit, req.Offset, false)
 	if len(tokens) == 0 {
 		sr.SortBy([]string{fieldSortArtist, fieldSortTitle})
 	} else {
@@ -159,7 +159,7 @@ func (ix *Index) run(ctx context.Context, req Request, tokens []string, relaxed 
 
 // artistFacets — исполнители, чьё имя совпало с запросом (чипы «Исполнители»).
 func (ix *Index) artistFacets(ctx context.Context, req Request, tokens []string, relaxed bool) ([]ArtistFacet, error) {
-	sr := bleve.NewSearchRequestOptions(ix.buildQuery(req, tokens, fieldsFor(ModeArtist), relaxed), 0, 0, false)
+	sr := bleve.NewSearchRequestOptions(ix.buildQuery(req, tokens, fieldsFor(ModeArtist), relaxed, false), 0, 0, false)
 	sr.AddFacet("artists", bleve.NewFacetRequest(fieldArtistKey, artistFacets))
 	res, err := ix.bleve.SearchInContext(ctx, sr)
 	if err != nil {
@@ -194,11 +194,14 @@ func fieldsFor(mode string) []fieldSpec {
 	return []fieldSpec{title, artist, {fieldLyrics, "", weightLyricsInAll, false}}
 }
 
-func (ix *Index) buildQuery(req Request, tokens []string, fields []fieldSpec, relaxed bool) query.Query {
+// byNumber — искать и по номеру песни, если запрос — одно число.
+func (ix *Index) buildQuery(req Request, tokens []string, fields []fieldSpec, relaxed, byNumber bool) query.Query {
 	bq := bleve.NewBooleanQuery()
 
 	if len(tokens) == 0 {
 		bq.AddMust(bleve.NewMatchAllQuery())
+	} else if byNumber && len(tokens) == 1 && isNumber(tokens[0]) {
+		bq.AddMust(numberQuery(tokens[0], fields))
 	} else {
 		var required, optional []query.Query
 		for i, tok := range tokens {
@@ -252,6 +255,32 @@ func (ix *Index) buildQuery(req Request, tokens []string, fields []fieldSpec, re
 		bq.AddFilter(b)
 	}
 	return bq
+}
+
+// numberQuery — номер песни: точное совпадение первым, затем номера,
+// начинающиеся с набранных цифр (гость ещё печатает), и обычный поиск
+// по словам («21» → «21 ВЕК»).
+func numberQuery(num string, fields []fieldSpec) query.Query {
+	exact := bleve.NewTermQuery(num)
+	exact.SetField(fieldNumber)
+	exact.SetBoost(100)
+	qs := []query.Query{exact, tokenQuery(num, true, fields)}
+	if len(num) >= 3 {
+		p := bleve.NewPrefixQuery(num)
+		p.SetField(fieldNumber)
+		p.SetBoost(5)
+		qs = append(qs, p)
+	}
+	return bleve.NewDisjunctionQuery(qs...)
+}
+
+func isNumber(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // tokenQuery — одно слово запроса хотя бы в одном из полей: точно, с
