@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"testing"
 )
 
@@ -57,7 +57,7 @@ func TestEncoreBase(t *testing.T) {
 		{ID: "2:512", Number: "512", Tab: 2, TabName: "General", Title: "1503", Artist: "AMATORY", Format: "EMP"},
 		{ID: "7:1", Number: "1", Tab: 7, Title: "ТЕСТ", Artist: "КТО-ТО", Format: "EMP"},
 	}
-	if !slices.Equal(res.Songs, want) {
+	if !reflect.DeepEqual(res.Songs, want) {
 		t.Errorf("songs =\n%+v\nwant\n%+v", res.Songs, want)
 	}
 }

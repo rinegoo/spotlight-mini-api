@@ -24,6 +24,18 @@ type Song struct {
 	Favorite   bool   `json:"favorite,omitempty"`   // избранное заведения (optFav в EnCore)
 	Format     string `json:"format,omitempty"`     // формат караоке-файла (в Encore — EMP)
 	Lyrics     string `json:"-"`                    // слова текста для поиска (ftext EnCore), наружу не отдаются
+
+	// Restrictions — действующие ограничения (модуль restrictions): пометки,
+	// которые интерфейс обязан показать у песни.
+	Restrictions []Restriction `json:"restrictions,omitempty"`
+}
+
+// Restriction — ограничение, применённое к песне (например, иноагент в РФ).
+type Restriction struct {
+	Kind    string `json:"kind"`           // вид, например "ru.inoagent"
+	Subject string `json:"subject"`        // кого касается — как в официальном реестре
+	Label   string `json:"label"`          // текст указания по установленной форме
+	Note    string `json:"note,omitempty"` // пояснение (например, «участник группы»)
 }
 
 // vocalTrackSuffix — так EnCore помечает песни с отдельной дорожкой голоса.

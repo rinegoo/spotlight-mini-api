@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rinegoo/spotlight-mini-api/internal/catalog"
+	"github.com/rinegoo/spotlight-mini-api/internal/restrictions"
 	"github.com/rinegoo/spotlight-mini-api/internal/search"
 )
 
@@ -24,6 +25,8 @@ type Config struct {
 	ImportToken string
 	// DataDir — куда сохранять принятый импорт (переживает перезапуск); пусто — не сохранять.
 	DataDir string
+	// Restrictions — модуль ограничений (для /api/stats); nil — выключен.
+	Restrictions interface{ Stats() restrictions.Stats }
 }
 
 // New возвращает обработчик со всеми маршрутами API.
@@ -85,6 +88,8 @@ type statsResponse struct {
 	Kind      string        `json:"kind"`           // file | import
 	Hash      string        `json:"hash,omitempty"` // хеш импорта
 	LoadedAt  time.Time     `json:"loadedAt"`
+	// Restrictions — политика ограничений и итог применения к каталогу.
+	Restrictions *restrictions.Stats `json:"restrictions,omitempty"`
 }
 
 func (h *handler) stats(w http.ResponseWriter, _ *http.Request) {
@@ -93,16 +98,22 @@ func (h *handler) stats(w http.ResponseWriter, _ *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "catalog is not loaded yet")
 		return
 	}
+	var rs *restrictions.Stats
+	if h.cfg.Restrictions != nil {
+		st := h.cfg.Restrictions.Stats()
+		rs = &st
+	}
 	writeJSON(w, http.StatusOK, statsResponse{
-		Songs:     snap.Songs,
-		Artists:   snap.Index.Artists(),
-		Favorites: snap.Favorites,
-		Lyrics:    snap.Lyrics,
-		Tabs:      snap.Tabs,
-		Adapter:   snap.Adapter,
-		Kind:      snap.Kind,
-		Hash:      snap.Hash,
-		LoadedAt:  snap.LoadedAt,
+		Restrictions: rs,
+		Songs:        snap.Songs,
+		Artists:      snap.Index.Artists(),
+		Favorites:    snap.Favorites,
+		Lyrics:       snap.Lyrics,
+		Tabs:         snap.Tabs,
+		Adapter:      snap.Adapter,
+		Kind:         snap.Kind,
+		Hash:         snap.Hash,
+		LoadedAt:     snap.LoadedAt,
 	})
 }
 

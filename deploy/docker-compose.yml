@@ -20,6 +20,13 @@ services:
       CATALOG_WATCH_INTERVAL: ${CATALOG_WATCH_INTERVAL:-30s}
       # Токен для encore-sync (POST /api/import); пусто — импорт выключен.
       IMPORT_TOKEN: ${IMPORT_TOKEN:-}
+      # Ограничения контента: регион заведения (RU; none — выключить) включает виды
+      # юрисдикции с минимумами по закону; RESTRICTIONS_POLICY_<ВИД> — ужесточить.
+      # Ручной список — /var/lib/spotlight/restrictions/manual.yaml в томе catalog-data.
+      RESTRICTIONS_REGION: ${RESTRICTIONS_REGION:-RU}
+      RESTRICTIONS_POLICY_RU_INOAGENT: ${RESTRICTIONS_POLICY_RU_INOAGENT:-}
+      RESTRICTIONS_SYNC_INTERVAL: ${RESTRICTIONS_SYNC_INTERVAL:-24h}
+      RESTRICTIONS_LABEL_SCALE: ${RESTRICTIONS_LABEL_SCALE:-2}
     volumes:
       - ${CATALOG_DIR:-./catalog}:/data:ro
       - catalog-data:/var/lib/spotlight   # последний импорт каталога

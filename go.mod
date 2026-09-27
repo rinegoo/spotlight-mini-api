@@ -6,6 +6,7 @@ require (
 	github.com/blevesearch/bleve/v2 v2.6.1
 	github.com/shakinm/xlsReader v0.9.12
 	golang.org/x/text v0.42.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
 )
 

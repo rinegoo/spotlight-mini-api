@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -55,6 +56,11 @@ type Store[I interface{ Close() error }] struct {
 	current atomic.Pointer[Snapshot[I]]
 	mu      sync.Mutex // сериализует перезагрузки
 
+	// prepare — обработка песен перед индексом (модуль ограничений); last —
+	// исходный каталог текущего снимка, чтобы пересобрать его при смене правил.
+	prepare func([]Song) []Song
+	last    *Result
+
 	// Версия файла, которую не удалось разобрать: не пытаться повторно,
 	// пока файл не изменится.
 	failedMod  time.Time
@@ -65,6 +71,25 @@ type Store[I interface{ Close() error }] struct {
 // появляется только через импорт.
 func NewStore[I interface{ Close() error }](path, adapter string, build func([]Song) (I, error)) *Store[I] {
 	return &Store[I]{path: path, adapter: adapter, build: build}
+}
+
+// SetPrepare задаёт обработку песен перед построением индекса (до первой загрузки).
+func (s *Store[I]) SetPrepare(f func([]Song) []Song) { s.prepare = f }
+
+// Rebuild пересобирает индекс текущего каталога (например, изменились ограничения).
+func (s *Store[I]) Rebuild() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := s.current.Load()
+	if cur == nil || s.last == nil {
+		return nil
+	}
+	snap, err := s.install(s.last, cur.Kind, cur.Source, cur.Hash)
+	if err != nil {
+		return err
+	}
+	snap.modTime, snap.size = cur.modTime, cur.size
+	return nil
 }
 
 // Current возвращает текущий снимок или nil, если каталог ещё не загружен.
@@ -106,22 +131,27 @@ func (s *Store[I]) Install(res *Result, kind, source, hash string) (*Snapshot[I]
 
 func (s *Store[I]) install(res *Result, kind, source, hash string) (*Snapshot[I], error) {
 	start := time.Now()
-	idx, err := s.build(res.Songs)
+	songs := res.Songs
+	if s.prepare != nil {
+		songs = s.prepare(slices.Clone(res.Songs))
+	}
+	idx, err := s.build(songs)
 	if err != nil {
 		return nil, err
 	}
+	s.last = res
 	snap := &Snapshot[I]{
 		Index:    idx,
 		Kind:     kind,
 		Source:   source,
 		Adapter:  res.Adapter,
 		Hash:     hash,
-		Songs:    len(res.Songs),
+		Songs:    len(songs),
 		Rejected: res.Rejected,
-		Tabs:     tabsOf(res.Songs),
+		Tabs:     tabsOf(songs),
 		LoadedAt: time.Now(),
 	}
-	for _, song := range res.Songs {
+	for _, song := range songs {
 		if song.Favorite {
 			snap.Favorites++
 		}

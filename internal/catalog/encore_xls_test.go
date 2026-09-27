@@ -3,7 +3,7 @@ package catalog
 import (
 	"errors"
 	"os"
-	"slices"
+	"reflect"
 	"testing"
 )
 
@@ -72,7 +72,7 @@ func TestEncoreXLSSmall(t *testing.T) {
 		{ID: "9683", Number: "9683", Title: "ГОРОДА", Artist: "БЕЛОЕ ЗОЛОТО", BackVocal: true, Format: "EMP"},
 		{ID: "83009", Number: "83009", Title: "IT'S PROBABLY ME", Artist: "STING", Format: "EMP"},
 	}
-	if !slices.Equal(res.Songs, want) {
+	if !reflect.DeepEqual(res.Songs, want) {
 		t.Errorf("songs =\n%v\nwant\n%v", res.Songs, want)
 	}
 	// Пустая строка и повтор номера 22926.
