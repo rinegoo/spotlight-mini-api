@@ -5,31 +5,37 @@
 #
 # Каталог приходит двумя путями:
 # 1) encore-sync в заведении снимает базу плеера EnCore (/BASE) и шлёт её на сайт
-#    (POST /api/import, токен IMPORT_TOKEN) — главный путь, импорт хранится в томе
-#    catalog-data и переживает перезапуск;
-# 2) файл выгрузки (.xls или base.db) в CATALOG_DIR — запасной путь, используется,
-#    пока импорта нет. Монтируется папка, а не файл: при замене файла bind-mount
-#    отдельного файла продолжал бы указывать на старую версию.
+#    (POST /api/import, токен IMPORT_TOKEN) — главный путь, импорт сохраняется
+#    и переживает перезапуск;
+# 2) файл выгрузки (.xls или base.db) — запасной путь, используется, пока импорта нет.
+#
+# Все данные сервера — в одной папке на хосте (DATA_DIR → /var/lib/spotlight):
+#   catalog.xls / base.db       — выгрузка каталога (запасной источник, кладёте вы)
+#   catalog-import.json.gz      — последний импорт от encore-sync (пишет сервер)
+#   restrictions/manual.yaml    — ручной список ограничений (правите вы)
+#   restrictions/ru-*.json      — выгрузки реестров (пишет сервер)
+# Монтируется папка, а не файл: при замене выгрузки сервер видит новую версию.
+# Сервер в контейнере работает от uid 10001 — папка должна быть ему доступна на
+# запись: sudo chown -R 10001:10001 <папка>.
 
 services:
   server:
     image: ghcr.io/rinegoo/spotlight-mini-api:${API_TAG:-latest}
     restart: unless-stopped
     environment:
-      CATALOG_FILE: /data/${CATALOG_FILENAME:-catalog.xls}
+      CATALOG_FILE: /var/lib/spotlight/${CATALOG_FILENAME:-catalog.xls}
       CATALOG_WATCH_INTERVAL: ${CATALOG_WATCH_INTERVAL:-30s}
       # Токен для encore-sync (POST /api/import); пусто — импорт выключен.
       IMPORT_TOKEN: ${IMPORT_TOKEN:-}
       # Ограничения контента: регион заведения (RU; none — выключить) включает виды
       # юрисдикции с минимумами по закону; RESTRICTIONS_POLICY_<ВИД> — ужесточить.
-      # Ручной список — /var/lib/spotlight/restrictions/manual.yaml в томе catalog-data.
+      # Ручной список — restrictions/manual.yaml в папке данных.
       RESTRICTIONS_REGION: ${RESTRICTIONS_REGION:-RU}
       RESTRICTIONS_POLICY_RU_INOAGENT: ${RESTRICTIONS_POLICY_RU_INOAGENT:-}
       RESTRICTIONS_SYNC_INTERVAL: ${RESTRICTIONS_SYNC_INTERVAL:-24h}
       RESTRICTIONS_LABEL_SCALE: ${RESTRICTIONS_LABEL_SCALE:-2}
     volumes:
-      - ${CATALOG_DIR:-./catalog}:/data:ro
-      - catalog-data:/var/lib/spotlight   # последний импорт каталога
+      - ${DATA_DIR:-./data}:/var/lib/spotlight
     # Наружу не публикуется: браузер ходит в web, а тот проксирует /api/*.
     expose:
       - "8080"
@@ -44,6 +50,3 @@ services:
     depends_on:
       server:
         condition: service_healthy
-
-volumes:
-  catalog-data:

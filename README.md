@@ -150,7 +150,8 @@ GitHub Actions (`.github/workflows/ci.yml`): на каждый push и PR — `g
 
 ```sh
 cd deploy
-cp .env.example .env     # IMPORT_TOKEN — для encore-sync; CATALOG_DIR/FILENAME — запасной файл
+cp .env.example .env     # IMPORT_TOKEN — для encore-sync; DATA_DIR — папка данных
+sudo mkdir -p /opt/karaoke/data && sudo chown -R 10001:10001 /opt/karaoke/data
 docker compose pull && docker compose up -d
 ```
 

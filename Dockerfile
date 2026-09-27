@@ -13,9 +13,10 @@ RUN adduser -D -H -u 10001 app \
 COPY --from=build /out/catalog-server /usr/local/bin/catalog-server
 USER app
 # Индекс строится во временном каталоге (os.TempDir) — /tmp должен быть доступен на запись.
-# DATA_DIR — последний импорт каталога (POST /api/import), нужен том, чтобы пережить пересоздание.
+# DATA_DIR — все данные сервера: выгрузка каталога, последний импорт (POST /api/import),
+# ограничения (restrictions/). Монтируется папка хоста, доступная на запись uid 10001.
 ENV LISTEN_ADDR=:8080 \
-    CATALOG_FILE=/data/catalog.xls \
+    CATALOG_FILE=/var/lib/spotlight/catalog.xls \
     DATA_DIR=/var/lib/spotlight
 EXPOSE 8080
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s \
