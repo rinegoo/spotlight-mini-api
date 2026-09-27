@@ -129,7 +129,7 @@ func (e Entry) Active(t time.Time) bool {
 type Match struct {
 	Entry  *Entry
 	Artist string // исполнитель в каталоге
-	How    string // alias | text | manual (применяются) · name | org | text-review (проверка)
+	How    string // alias | text | manual (применяются) · name | surname | org | text-review (проверка)
 	Note   string
 }
 
@@ -186,6 +186,14 @@ func Compile(entries []Entry, m Manual, updated time.Time) *Set {
 			if w := strings.Fields(textnorm.Normalize(e.Name)); len(w) >= 2 {
 				for _, k := range []string{w[0] + " " + w[1], w[1] + " " + w[0]} {
 					s.review[k] = append(s.review[k], reviewRef{e, "name"})
+				}
+				// В каталоге часто только фамилия или фамилия с инициалом
+				// («ПУГАЧЁВА А., ГАЛКИН») — однофамильцев больше, только на проверку.
+				if len([]rune(w[0])) >= 4 {
+					ini := string([]rune(w[1])[:1])
+					for _, k := range []string{w[0], w[0] + " " + ini, ini + " " + w[0]} {
+						s.review[k] = append(s.review[k], reviewRef{e, "surname"})
+					}
 				}
 			}
 		} else if e.Name != "" && e.Text == "" {
