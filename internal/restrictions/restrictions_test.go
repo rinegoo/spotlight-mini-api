@@ -47,6 +47,7 @@ func TestMatchSong(t *testing.T) {
 			{Subject: "Тестов Тест Тестович", Artists: []string{"ГРУППА ПИТА"}, Note: "участник группы"}, // группа
 			{Subject: "Примеров Пример Примерович", Artists: []string{"ПРИМЕРОВ ПРИМЕР"}},                // подтверждение ФИО
 			{Kind: ru.KindCourtBan, Subject: "Решение суда № 1", Songs: []restrictions.SongRef{{Title: "ЗАПРЕТНАЯ ТОЖЕ"}}},
+			{Subject: "Тестов Тест Тестович", Songs: []restrictions.SongRef{{Artist: "КТО-ТО & ТЕСТОВ", Title: "ОСОБАЯ"}}}, // по песне
 		},
 		Ignore: []restrictions.ManualIgnore{{Subject: "Интернет-ресурс «Рассвет»", Artists: []string{"РАССВЕТ"}}},
 	}
@@ -74,6 +75,7 @@ func TestMatchSong(t *testing.T) {
 		{song("15", "КТО-ТО А., ТЕСТОВ", "К"), nil, true},                    // только фамилия в дуэте — на проверку
 		{song("16", "ТЕСТОВ Т.", "Л"), nil, true},                            // фамилия с инициалом — на проверку
 		{song("17", "ТЕСТОВ О.", "М"), nil, false},                           // другой инициал — не он
+		{song("18", "КТО-ТО & ТЕСТОВ", "ОСОБАЯ"), []string{"manual"}, false}, // правило по песне снимает проверку
 	}
 	for _, c := range cases {
 		active, review := set.MatchSong(c.song, now)

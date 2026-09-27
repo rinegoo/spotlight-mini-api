@@ -20,6 +20,7 @@ package restrictions
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -372,6 +373,8 @@ func (s *Set) MatchSong(song catalog.Song, now time.Time) (active []Match, revie
 			}
 		}
 	}
+	// Уже применённые записи (например, ручным правилом по песне) не проверяем повторно.
+	review = slices.DeleteFunc(review, func(m Match) bool { return seen[m.Entry] })
 	return active, review
 }
 
